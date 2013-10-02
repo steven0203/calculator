@@ -2,37 +2,46 @@
 #include <string>
 #include <vector>
 #include <stack>
+#include <map>
 #include <cstdlib>
 #include <cmath>
+#include <stdexcept>
 
 using namespace std;
 
 namespace op{
-	enum opIndex{lparen, rparen, u_plus, u_minus, plus, minus, divide, times, mod, eos, operand};
-	enum Associativity{left_asso, right_asso};
+	enum opIndex{lparen, rparen, assign, u_plus, u_minus, plus, minus, divide, times, mod, eos, operand};
 }
+enum Associativity{left2right, right2left};
+enum operandType{identifier, pure_number, syntax_error};
+
 //In-stack precedence
-const size_t isp[]={0, 19, 16, 16, 13, 13, 14, 14, 14, 0};
+const size_t isp[]={0, 19, 3, 16, 16, 13, 13, 14, 14, 14, 0};
 //Incomming precedence
-const size_t icp[]={20, 19, 16, 16, 13, 13, 14, 14, 14, 0};
-const op::Associativity opasso[]={left_asso};
+const size_t icp[]={20, 19, 3, 16, 16, 13, 13, 14, 14, 14, 0};
+const Associativity asso[]={left2right, left2right, right2left, right2left, left2right, left2right, left2right, left2right, left2right, left2right, left2right};
+map<string, double> variable;
 
 string getToken(const string &str, size_t *p);
-double stod(const string &str, size_t *sz);
 op::opIndex tokenType(const string &str);
 string trim(const string &str);
 vector<string> Infix2Postfix(const string &str);
 double calcPostfixExpr(const vector<string> &str);
+operandType checkOpType(const string &);
+double getOpValue(const string &);
 
 int main(int argc, char *argv[]){
 	size_t sz=0;
 	string expr;
-	cin>>expr;
-	vector<string> result=Infix2Postfix(expr);
-	for(auto &s: result){
-		cout<<s;
+	while(1){
+		cout<<">";
+		cin>>expr;
+		vector<string> result=Infix2Postfix(expr);
+		/*for(auto &s: result){
+			cout<<s;
+		}*/
+		cout<<"="<<calcPostfixExpr(result)<<endl;
 	}
-	cout<<"="<<calcPostfixExpr(result);
 	return 0;
 }
 
@@ -57,7 +66,7 @@ vector<string> Infix2Postfix(const string &str){
 			//unstack '('
 			opstack.pop();
 		}else{
-			for(;!opstack.empty()&&isp[tokenType(opstack.top())]>=icp[opi];opstack.pop())
+			for(;!opstack.empty()&&(isp[tokenType(opstack.top())]>icp[opi]||(isp[tokenType(opstack.top())]==icp[opi]&&asso[tokenType(opstack.top())]==left2right));opstack.pop())
 				result.push_back(opstack.top());
 			opstack.push(token);
 		}
@@ -71,52 +80,62 @@ vector<string> Infix2Postfix(const string &str){
 }
 
 double calcPostfixExpr(const vector<string> &pExprToken){
-	stack<double> pstack;
-	size_t garbage;
+	stack<string> pstack;
 	for(auto &token: pExprToken){
 		op::opIndex opi=tokenType(token);
 		if(opi==op::operand)
-			pstack.push(stod(token, &garbage));
+			pstack.push(token);
 		else{
-			double op2=pstack.top();
+			double op2_val, op1_val;
+			string op2=pstack.top();
+			op2_val=getOpValue(op2);
 			pstack.pop();
-			double op1;
+			if(opi==op::u_plus||opi==op::u_minus){
+				op2_val=getOpValue(op2);
+				pstack.push(to_string(opi==op::u_plus?op2_val:-op2_val));
+				continue;
+			}
+
+			string op1=pstack.top();
+			pstack.pop();
+			op1_val=getOpValue(op1);
 			switch(opi){
+				case op::assign:
+					variable[op1]=op2_val;
+					pstack.push(to_string(op2_val));
+					break;
 				case op::plus:
-					op1=pstack.top();
-					pstack.pop();
-					pstack.push(op1+op2); break;
-				case op::u_plus:
-					pstack.push(op2); break;
+					pstack.push(to_string(op1_val+op2_val)); break;
 				case op::minus:
-					op1=pstack.top();
-					pstack.pop();
-					pstack.push(op1-op2); break;
-				case op::u_minus:
-					pstack.push(-op2); break;
+					pstack.push(to_string(op1_val-op2_val)); break;
 				case op::times:
-					op1=pstack.top();
-					pstack.pop();
-					pstack.push(op1*op2); break;
+					pstack.push(to_string(op1_val*op2_val)); break;
 				case op::divide:
-					op1=pstack.top();
-					pstack.pop();
-					pstack.push(op1/op2); break;
+					pstack.push(to_string(op1_val/op2_val)); break;
 				case op::mod:
-					op1=pstack.top();
-					pstack.pop();
-					pstack.push(fmod(op1,op2)); break;
+					pstack.push(to_string(fmod(op1_val,op2_val))); break;
 			}
 		}
 	}
-	return pstack.top();
+	if(checkOpType(pstack.top())==pure_number)
+		return stod(pstack.top());
+	else
+		return variable[pstack.top()];
 }
 
 string getToken(const string &str, size_t *p){
 	string token;
-	size_t sz;
+	size_t sz=0;
 
-	stod(str.substr(*p), &sz);
+	if(*p>=str.size())
+		return (*p)++,"";
+	
+	try{
+		stod(str.substr(*p), &sz);
+	}
+	catch(...){
+		sz=0;
+	}
 	if(str[*p]=='+'||str[*p]=='-'){
 		if(*p==0||str[*p-1]=='(')
 			return string(1, str[(*p)++])+"u";
@@ -131,13 +150,6 @@ string getToken(const string &str, size_t *p){
 	}
 
 	return trim(token);
-}
-
-double stod(const string &str, size_t *sz){
-	char *sz2;
-	double result=strtod(str.c_str(), &sz2);
-	*sz=sz2-str.c_str();
-	return result;
 }
 
 op::opIndex tokenType(const string &str){
@@ -156,6 +168,8 @@ op::opIndex tokenType(const string &str){
 			return op::rparen;
 		case '%':
 			return op::mod;
+		case '=':
+			return op::assign;
 		default:
 			return op::operand;
 	}
@@ -167,4 +181,37 @@ string trim(const string &str){
 	const size_t count=str.find_last_not_of(' ')-start+1;
 	//count =end-start+1
 	return str.substr(start, count);
+}
+
+operandType checkOpType(const string &token){
+	size_t sz;
+	try{
+		stod(token, &sz);
+	}catch(std::invalid_argument &e){
+		sz=0;
+	}
+	if(sz==0)
+		return identifier;
+	if(sz>0&&sz!=token.size())
+		return syntax_error;
+	else
+		return pure_number;
+}
+
+double getOpValue(const string &token){
+	//cout<<"GetOpValue="<<token<<endl;
+	switch(checkOpType(token)){
+		case pure_number:
+			return stod(token);
+		case identifier:
+			{
+				auto it=variable.find(token);
+				if(it==variable.cend()){
+					variable[token]=0.0;
+					return 0.0;
+				}else
+					return it->second;
+			}
+		case syntax_error:;
+	}
 }
